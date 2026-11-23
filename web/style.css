@@ -51,6 +51,8 @@ canvas {
   flex-direction: column;
   gap: 16px;
 }
+.head { display: flex; align-items: center; justify-content: space-between; }
+#lang { padding: 3px 8px; font-size: 11px; color: var(--dim); }
 h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; margin: 0 0 4px; color: var(--accent); }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > label { color: var(--dim); }

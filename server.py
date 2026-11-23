@@ -102,7 +102,7 @@ def artwork(seed):
         }
         _art_cache[seed] = result
         return result
-    raise RuntimeError("aucun tableau en format paysage trouvé")
+    raise RuntimeError("aucun tableau en format paysage trouvé / no landscape painting found")
 
 
 def journal(entry):
@@ -166,14 +166,14 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_error(413)
         body = self.rfile.read(length)
         if not body.startswith(b"\x89PNG"):
-            return self._json({"error": "PNG attendu"}, 400)
+            return self._json({"error": "PNG attendu / PNG expected"}, 400)
         params = json.loads(urllib.parse.unquote(self.headers["X-Params"]))
         name = safe_name(params.get("name", "mosaique")) + ".png"
 
         # Garder et Appliquer enregistrent tous deux dans le dossier des fonds d'écran.
         action = "garder" if url.path == "/api/keep" else "appliquer"
         if action == "appliquer" and not shutil.which("omarchy"):
-            return self._json({"error": "Appliquer nécessite Omarchy ; utilise Garder"}, 501)
+            return self._json({"error": "Appliquer nécessite Omarchy, utilise Garder / Apply requires Omarchy, use Keep"}, 501)
 
         folder = keep_dir()
         folder.mkdir(parents=True, exist_ok=True)

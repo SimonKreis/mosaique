@@ -1,5 +1,10 @@
-import { FIELDS, FIELD_IDS, generate, stats, passesGate, normalize, mulberry32, pick } from "./fields.js";
-import { PALETTES, PALETTE_LABELS, RENDERERS, pitchesFor, makeGrid, draw, sampleImage, prepareAscii } from "./render.js";
+import { FIELDS, FIELD_IDS, ALLOVER_IDS, generate, stats, normalize, mulberry32, pick, pickWeighted } from "./fields.js";
+import { PALETTES, PALETTE_LABELS, COLD_PALETTES, RENDERERS, pitchesFor, makeGrid, draw, sampleImage, prepareAscii } from "./render.js";
+import { lang, setLang, L, t, applyStatic } from "./i18n.js";
+
+// Préférences : froid et all-over. Encre et Glace, les favoris, pèsent double au tirage.
+const FAVORITE = { field: "encre", palette: "glace" };
+const weighted = (ids, fav) => ids.map((id) => [id, id === fav ? 2 : 1]);
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas"), ctx = canvas.getContext("2d");
@@ -9,7 +14,7 @@ const state = {
   screens: [],
   screen: 0,
   // Choix de l'utilisateur : "hasard" = retiré à chaque shuffle ; sinon verrouillé.
-  choice: { source: "hasard", renderer: "cercles", pitch: 24, pitchRandom: false, palette: "hasard" },
+  choice: { source: "allover", renderer: "cercles", pitch: 24, pitchRandom: false, palette: "froides" },
   spec: null,
   current: null,
   history: [],
@@ -59,11 +64,11 @@ async function render(spec, { gate = false } = {}) {
         const art = await getArtwork(spec.seed);
         img = art.img;
         spec.art = { id: art.id, title: art.title, artist: art.artist, date: art.date };
-        desc = `Tableau · ${art.title}\n${art.artist}`;
+        desc = `${t("paintingDesc")} · ${art.title}\n${art.artist}`;
       } else {
         if (!state.userImage) { $("file").click(); return; }
         img = state.userImage;
-        desc = `Image · ${state.userImageName}`;
+        desc = `${t("imageDesc")} · ${state.userImageName}`;
       }
       ({ v, colors } = sampleImage(img, grid.cols, grid.rows, gridAspect));
       normalize(v, false, 1);
@@ -74,11 +79,10 @@ async function render(spec, { gate = false } = {}) {
         res = state.fieldCache.get(key);
         if (!res) {
           res = generate(spec.field, seed + k, grid.cols, grid.rows, gridAspect);
-          res.stats = stats(res.v);
           state.fieldCache.set(key, res);
           if (state.fieldCache.size > 40) state.fieldCache.delete(state.fieldCache.keys().next().value);
         }
-        if (!gate || passesGate(res.stats)) { spec.seed = seed + k; rejected = k; break; }
+        if (!gate || res.ok) { spec.seed = seed + k; rejected = k; break; }
       }
       v = res.v; desc = res.desc;
     }
@@ -89,7 +93,7 @@ async function render(spec, { gate = false } = {}) {
     writeHash(spec);
   } catch (e) {
     console.error(e);
-    toast(`Erreur : ${e.message}`, true);
+    toast(`${t("error")} ${e.message}`, true);
   } finally {
     $("busy").hidden = true;
   }
@@ -98,10 +102,10 @@ async function render(spec, { gate = false } = {}) {
 function showInfo() {
   const { spec, desc, grid, rejected } = state.current;
   const lines = [
-    desc,
-    `${RENDERERS[spec.renderer]} · ${PALETTE_LABELS[spec.palette]}`,
-    `grille ${grid.cols}×${grid.rows} · pas ${spec.pitch} px`,
-    `seed ${spec.seed}${rejected ? ` · ${rejected} rejet${rejected > 1 ? "s" : ""} du filtre` : ""}`,
+    L(desc),
+    `${L(RENDERERS[spec.renderer])} · ${L(PALETTE_LABELS[spec.palette])}`,
+    `${t("grid")} ${grid.cols}×${grid.rows} · ${t("pitch")} ${spec.pitch} px`,
+    `seed ${spec.seed}${rejected ? ` · ${t("rejected", rejected)}` : ""}`,
     `${state.pos + 1} / ${state.history.length}`,
   ];
   $("info").textContent = lines.join("\n");
@@ -111,11 +115,13 @@ function showInfo() {
 
 function resolveSpec(seed) {
   const c = state.choice, rc = mulberry32(seed ^ 0x5bd1e995), [W, H] = screenWH();
-  const field = c.source === "hasard" ? pick(rc, FIELD_IDS) : c.source;
+  const field = c.source === "allover" ? pickWeighted(rc, weighted(ALLOVER_IDS, FAVORITE.field))
+    : c.source === "hasard" ? pick(rc, FIELD_IDS) : c.source;
   const renderer = c.renderer === "hasard" ? pick(rc, Object.keys(RENDERERS)) : c.renderer;
   const pitches = pitchesFor(W, H);
   const pitch = c.pitchRandom ? pick(rc, pitches.filter((p) => p >= 10 && p <= 48)) : snapPitch(c.pitch, pitches);
   let palette = c.palette;
+  if (palette === "froides") palette = pickWeighted(rc, weighted(COLD_PALETTES, FAVORITE.palette));
   if (palette === "hasard") palette = isImageSource(field) && rc() < 0.5 ? "image" : pick(rc, Object.keys(PALETTES));
   if (palette === "image" && !isImageSource(field)) palette = pick(rc, Object.keys(PALETTES));
   return { seed, field, renderer, pitch, palette, W, H };
@@ -162,7 +168,7 @@ async function save(kind) {
   const name = `mosaique-${tag}-${spec.renderer}-${spec.palette}-${spec.seed}-${spec.W}x${spec.H}`;
   const params = {
     name, seed: spec.seed, source: spec.field, rendu: spec.renderer, palette: spec.palette, pas: spec.pitch,
-    ecran: `${spec.W}x${spec.H}`, grille: `${grid.cols}x${grid.rows}`, description: desc.replace("\n", " — "),
+    ecran: `${spec.W}x${spec.H}`, grille: `${grid.cols}x${grid.rows}`, description: L(desc).replace("\n", " — "),
     stats: { moyenne: +st.mean.toFixed(3), ecart: +st.std.toFixed(3), visible: +st.visible.toFixed(3) },
     choix: { ...state.choice }, oeuvre: spec.art ?? null, image: spec.field === "image" ? state.userImageName : null,
   };
@@ -171,8 +177,8 @@ async function save(kind) {
     const r = await fetch(`/api/${kind}`, { method: "POST", body: blob, headers: { "X-Params": encodeURIComponent(JSON.stringify(params)) } });
     const res = await r.json();
     if (!res.ok) throw new Error(res.error || r.status);
-    toast(kind === "keep" ? `Gardé : ${res.path.split("/").pop()}` : "Appliqué comme fond d'écran");
-  } catch (e) { toast(`Échec : ${e.message}`, true); }
+    toast(kind === "keep" ? `${t("kept")} ${res.path.split("/").pop()}` : t("applied"));
+  } catch (e) { toast(`${t("failed")} ${e.message}`, true); }
 }
 
 // ─── URL (reproductibilité) ──────────────────────────────────────────────
@@ -193,15 +199,32 @@ function readHash() {
 
 function buildControls() {
   const src = $("source");
-  src.innerHTML = `<option value="hasard">Au hasard (équations)</option>` +
-    FIELD_IDS.map((id) => `<option value="${id}">${FIELDS[id].label}</option>`).join("") +
-    `<option value="tableau">Tableau (musée)</option><option value="image">Mon image…</option>`;
+  const star = (id, fav) => (id === fav ? " ★" : "");
+  const opt = (id) => `<option value="${id}">${L(FIELDS[id].label)}${star(id, FAVORITE.field)}</option>`;
+  src.innerHTML =
+    `<optgroup label="${t("groupPrefSources")}"><option value="allover">${t("randomAllover")}</option>${ALLOVER_IDS.map(opt).join("")}</optgroup>` +
+    `<optgroup label="${t("groupOther")}"><option value="hasard">${t("randomAllFields")}</option>${FIELD_IDS.filter((id) => !FIELDS[id].allOver).map(opt).join("")}</optgroup>` +
+    `<optgroup label="${t("groupImages")}"><option value="tableau">${t("painting")}</option><option value="image">${t("myImage")}</option></optgroup>`;
 
   const seg = $("renderer");
-  seg.innerHTML = [["hasard", "Hasard"], ...Object.entries(RENDERERS)].map(([id, l]) => `<button data-r="${id}">${l}</button>`).join("");
+  seg.innerHTML = [["hasard", t("randomShort")], ...Object.entries(RENDERERS).map(([id, l]) => [id, L(l)])].map(([id, l]) => `<button data-r="${id}">${l}</button>`).join("");
 
-  $("palette").innerHTML = `<option value="hasard">Au hasard</option>` +
-    Object.keys(PALETTE_LABELS).map((id) => `<option value="${id}">${PALETTE_LABELS[id]}</option>`).join("");
+  const popt = (id) => `<option value="${id}">${L(PALETTE_LABELS[id])}${star(id, FAVORITE.palette)}</option>`;
+  $("palette").innerHTML =
+    `<optgroup label="${t("groupPrefPalettes")}"><option value="froides">${t("randomCold")}</option>${COLD_PALETTES.map(popt).join("")}</optgroup>` +
+    `<optgroup label="${t("groupOther")}"><option value="hasard">${t("randomAll")}</option>${Object.keys(PALETTE_LABELS).filter((id) => !COLD_PALETTES.includes(id)).map(popt).join("")}</optgroup>`;
+
+  $("lang").textContent = lang === "fr" ? "EN" : "FR";
+  applyStatic();
+}
+
+function bindControls() {
+  const src = $("source"), seg = $("renderer");
+  $("lang").onclick = () => {
+    setLang(lang === "fr" ? "en" : "fr");
+    buildControls(); syncControls();
+    if (state.current) showInfo();
+  };
 
   $("screen").innerHTML = state.screens.map((s, i) => `<option value="${i}">${s.name} · ${s.width}×${s.height}</option>`).join("");
 
@@ -227,7 +250,7 @@ function buildControls() {
   $("palette").onchange = () => {
     const p = $("palette").value; $("palette").blur();
     state.choice.palette = p;
-    if (p !== "hasard") tweak({ palette: p });
+    if (p !== "hasard" && p !== "froides") tweak({ palette: p });
   };
   $("screen").onchange = () => {
     state.screen = +$("screen").value; $("screen").blur();
@@ -266,7 +289,7 @@ async function useUserImage(file) {
     state.userImageName = file.name;
     state.choice.source = "image";
     await shuffle();
-  } catch { toast("Image illisible", true); }
+  } catch { toast(t("badImage"), true); }
 }
 
 function updatePitchLabel(p) {
@@ -298,6 +321,7 @@ async function main() {
   state.screen = state.screens.reduce((b, s, i, a) => (s.width * s.height > a[b].width * a[b].height ? i : b), 0);
   await prepareAscii();
   buildControls();
+  bindControls();
   syncControls();
   const fromHash = readHash();
   if (fromHash) {

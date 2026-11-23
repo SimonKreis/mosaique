@@ -1,8 +1,12 @@
 // Rendus : la valeur de chaque cellule (0–1) devient un cercle, un carré,
 // un pixel ou un caractère. La grille est calée sur la résolution de l'écran.
 
+// Palettes froides d'abord (les préférées), puis les autres.
 export const PALETTES = {
   glace: ["#040817", "#0b2a6f", "#1e6fd9", "#34d1f0", "#c9f6ff", "#ffffff"],
+  abysse: ["#01040a", "#03122b", "#08305a", "#0f5c86", "#3aa0c8", "#bfe9ff"],
+  givre: ["#05070a", "#1b2430", "#3d5266", "#7d97ad", "#c8d8e6", "#f4f9ff"],
+  polaire: ["#03030f", "#121244", "#25358a", "#2f7fc4", "#6fd3e8", "#e6fbff"],
   aurore: ["#04101a", "#0d3b66", "#1e9e8f", "#6ff0c0", "#e8ffe8"],
   braise: ["#0a0410", "#3b0f4f", "#9c2a5b", "#f0703a", "#ffd27a", "#fff4d6"],
   nebuleuse: ["#07041a", "#2a1a6e", "#6a2fb0", "#d04fd0", "#ff9ee0", "#fff0fa"],
@@ -11,10 +15,13 @@ export const PALETTES = {
   spectre: ["#1a0b3a", "#3b4cc0", "#20b2aa", "#9be15d", "#ffd23f", "#ff6b6b"],
 };
 export const PALETTE_LABELS = {
-  glace: "Glace", aurore: "Aurore", braise: "Braise", nebuleuse: "Nébuleuse",
-  phosphore: "Phosphore", lune: "Lune", spectre: "Spectre", image: "Couleurs de l'image",
+  glace: { fr: "Glace", en: "Ice" }, abysse: { fr: "Abysse", en: "Abyss" }, givre: { fr: "Givre", en: "Frost" },
+  polaire: { fr: "Polaire", en: "Polar" }, aurore: { fr: "Aurore", en: "Aurora" }, braise: { fr: "Braise", en: "Ember" },
+  nebuleuse: { fr: "Nébuleuse", en: "Nebula" }, phosphore: { fr: "Phosphore", en: "Phosphor" }, lune: { fr: "Lune", en: "Moon" },
+  spectre: { fr: "Spectre", en: "Spectrum" }, image: { fr: "Couleurs de l'image", en: "Image colours" },
 };
-export const RENDERERS = { cercles: "Cercles", carres: "Carrés", pixels: "Pixels", ascii: "ASCII" };
+export const COLD_PALETTES = ["glace", "abysse", "givre", "polaire", "aurore"];
+export const RENDERERS = { cercles: { fr: "Cercles", en: "Circles" }, carres: { fr: "Carrés", en: "Squares" }, pixels: { fr: "Pixels", en: "Pixels" }, ascii: { fr: "ASCII", en: "ASCII" } };
 
 const FONT = '"JetBrainsMono Nerd Font", "JetBrains Mono", monospace';
 const LEVELS = 6; // niveaux de taille pour cercles et carrés

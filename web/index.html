@@ -9,50 +9,53 @@
 <body>
   <main id="stage">
     <canvas id="canvas" width="3840" height="2160"></canvas>
-    <div id="busy" hidden>calcul…</div>
-    <div id="drop" hidden>Dépose une image</div>
+    <div id="busy" hidden data-i18n="busy"></div>
+    <div id="drop" hidden data-i18n="drop"></div>
   </main>
 
   <aside id="panel">
-    <h1>Mosaïque</h1>
+    <div class="head">
+      <h1>Mosaïque</h1>
+      <button id="lang" title="Français / English"></button>
+    </div>
 
     <div class="field">
-      <label for="source">Source</label>
+      <label for="source" data-i18n="source"></label>
       <select id="source"></select>
     </div>
 
     <div class="field">
-      <label>Rendu</label>
+      <label data-i18n="renderer"></label>
       <div class="seg" id="renderer"></div>
     </div>
 
     <div class="field">
-      <label for="pitch">Densité <span id="pitchLabel" class="dim"></span></label>
+      <label for="pitch"><span data-i18n="density"></span> <span id="pitchLabel" class="dim"></span></label>
       <input type="range" id="pitch" min="0" max="0" step="1">
-      <label class="check"><input type="checkbox" id="pitchRandom"> au hasard</label>
+      <label class="check"><input type="checkbox" id="pitchRandom"> <span data-i18n="random"></span></label>
     </div>
 
     <div class="field">
-      <label for="palette">Palette</label>
+      <label for="palette" data-i18n="palette"></label>
       <select id="palette"></select>
     </div>
 
     <div class="field">
-      <label for="screen">Écran</label>
+      <label for="screen" data-i18n="screen"></label>
       <select id="screen"></select>
     </div>
 
     <div class="actions">
-      <button id="prev" title="Précédent (←)">←</button>
-      <button id="shuffle" class="primary" title="Nouvelle image (espace)">Shuffle</button>
-      <button id="next" title="Suivant (→)">→</button>
+      <button id="prev" data-i18n-title="titlePrev">←</button>
+      <button id="shuffle" class="primary" data-i18n-title="titleShuffle">Shuffle</button>
+      <button id="next" data-i18n-title="titleNext">→</button>
     </div>
     <div class="actions">
-      <button id="keep" title="Enregistrer dans solitude/ (K)">Garder</button>
-      <button id="apply" title="Mettre en fond d'écran (A)">Appliquer</button>
+      <button id="keep" data-i18n="keep" data-i18n-title="titleKeep"></button>
+      <button id="apply" data-i18n="apply" data-i18n-title="titleApply"></button>
     </div>
 
-    <p class="keys dim">espace : shuffle · ← → : historique · K : garder · A : appliquer</p>
+    <p class="keys dim" data-i18n="keys"></p>
     <p id="info"></p>
     <p id="toast"></p>
     <input type="file" id="file" accept="image/*" hidden>
