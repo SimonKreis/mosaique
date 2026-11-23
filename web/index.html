@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Mosaïque</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="icon.png">
+</head>
+<body>
+  <main id="stage">
+    <canvas id="canvas" width="3840" height="2160"></canvas>
+    <div id="busy" hidden>calcul…</div>
+    <div id="drop" hidden>Dépose une image</div>
+  </main>
+
+  <aside id="panel">
+    <h1>Mosaïque</h1>
+
+    <div class="field">
+      <label for="source">Source</label>
+      <select id="source"></select>
+    </div>
+
+    <div class="field">
+      <label>Rendu</label>
+      <div class="seg" id="renderer"></div>
+    </div>
+
+    <div class="field">
+      <label for="pitch">Densité <span id="pitchLabel" class="dim"></span></label>
+      <input type="range" id="pitch" min="0" max="0" step="1">
+      <label class="check"><input type="checkbox" id="pitchRandom"> au hasard</label>
+    </div>
+
+    <div class="field">
+      <label for="palette">Palette</label>
+      <select id="palette"></select>
+    </div>
+
+    <div class="field">
+      <label for="screen">Écran</label>
+      <select id="screen"></select>
+    </div>
+
+    <div class="actions">
+      <button id="prev" title="Précédent (←)">←</button>
+      <button id="shuffle" class="primary" title="Nouvelle image (espace)">Shuffle</button>
+      <button id="next" title="Suivant (→)">→</button>
+    </div>
+    <div class="actions">
+      <button id="keep" title="Enregistrer dans solitude/ (K)">Garder</button>
+      <button id="apply" title="Mettre en fond d'écran (A)">Appliquer</button>
+    </div>
+
+    <p class="keys dim">espace : shuffle · ← → : historique · K : garder · A : appliquer</p>
+    <p id="info"></p>
+    <p id="toast"></p>
+    <input type="file" id="file" accept="image/*" hidden>
+  </aside>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
