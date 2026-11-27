@@ -1,56 +1,33 @@
-import { FIELDS, FIELD_IDS, PREFERRED_FIELDS, generate, stats, normalize, mulberry32, pick, pickWeighted } from "./fields.js";
-import { PALETTES, PALETTE_LABELS, SPECTRAL_PALETTES, COLD_PALETTES, RENDERERS, pitchesFor, makeGrid, draw, sampleImage, prepareAscii } from "./render.js";
+import { FIELDS, FIELD_IDS, FIELD_WEIGHTS, generate, stats, mulberry32, pick, pickWeighted } from "./fields.js";
+import { PALETTE_LABELS, SPECTRAL_PALETTES, COLD_PALETTES, RENDERERS, pitchesFor, makeGrid, draw, prepareAscii } from "./render.js";
 import { lang, setLang, L, t, applyStatic } from "./i18n.js";
 
-// Préférences : champs uniformes et symétriques, dégradés spectraux et froids.
-// Les favoris (★) pèsent plus lourd au tirage ; le reste vit dans « Plus d'options ».
-const FIELD_WEIGHTS = { encre: 2 };
+// Une seule liste : les champs aléatoires stationnaires et isotropes, dans
+// l'ordre des préférences. Les favoris (★) pèsent plus lourd au tirage.
+const PALETTES = [...SPECTRAL_PALETTES, ...COLD_PALETTES];
 const PALETTE_WEIGHTS = { cubehelix: 3, spectre: 2, glace: 2 };
-const PREFERRED_PALETTES = [...SPECTRAL_PALETTES, ...COLD_PALETTES];
 const weighted = (ids, weights) => ids.map((id) => [id, weights[id] ?? 1]);
-const isPreferredSource = (v) => v === "prefs" || PREFERRED_FIELDS.includes(v);
-const isPreferredPalette = (v) => v === "prefs" || PREFERRED_PALETTES.includes(v);
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas"), ctx = canvas.getContext("2d");
-const isImageSource = (f) => f === "tableau" || f === "image";
 
 const state = {
   screens: [],
   screen: 0,
-  // Choix de l'utilisateur : "hasard" = retiré à chaque shuffle ; sinon verrouillé.
-  choice: { source: "prefs", renderer: "cercles", pitch: 24, pitchRandom: false, palette: "prefs" },
-  showAll: localStorage.getItem("mosaique.showAll") === "1",
-  spec: null,
+  // "hasard" = retiré à chaque shuffle ; sinon verrouillé.
+  choice: { source: "hasard", renderer: "cercles", pitch: 24, pitchRandom: false, palette: "hasard" },
   current: null,
   history: [],
   pos: -1,
-  userImage: null,
-  userImageName: "",
   fieldCache: new Map(),
-  artCache: new Map(),
 };
 
 const screenWH = () => { const s = state.screens[state.screen]; return [s.width, s.height]; };
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
 function toast(msg, error = false) {
-  const t = $("toast"); t.textContent = msg; t.className = error ? "error" : "";
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.textContent = ""), 5000);
-}
-
-function loadImage(src) {
-  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
-}
-
-async function getArtwork(seed) {
-  if (state.artCache.has(seed)) return state.artCache.get(seed);
-  const r = await fetch(`/api/artwork?seed=${seed}`), art = await r.json();
-  if (art.error) throw new Error(art.error);
-  art.img = await loadImage(art.image);
-  delete art.image;
-  state.artCache.set(seed, art);
-  return art;
+  const el = $("toast"); el.textContent = msg; el.className = error ? "error" : "";
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => (el.textContent = ""), 5000);
 }
 
 // ─── Rendu d'une spec ────────────────────────────────────────────────────
@@ -62,39 +39,19 @@ async function render(spec, { gate = false } = {}) {
     if (canvas.width !== spec.W || canvas.height !== spec.H) { canvas.width = spec.W; canvas.height = spec.H; }
     const grid = makeGrid(spec.renderer, spec.W, spec.H, spec.pitch, ctx);
     const gridAspect = (grid.cols * grid.cellW) / (grid.rows * grid.cellH);
-    let v, colors = null, desc, rejected = 0;
-
-    if (isImageSource(spec.field)) {
-      let img;
-      if (spec.field === "tableau") {
-        const art = await getArtwork(spec.seed);
-        img = art.img;
-        spec.art = { id: art.id, title: art.title, artist: art.artist, date: art.date };
-        desc = `${t("paintingDesc")} · ${art.title}\n${art.artist}`;
-      } else {
-        if (!state.userImage) { $("file").click(); return; }
-        img = state.userImage;
-        desc = `${t("imageDesc")} · ${state.userImageName}`;
+    let res, rejected = 0;
+    for (let k = 0; k < (gate ? 15 : 1); k++) {
+      const key = `${spec.field}|${spec.seed + k}|${grid.cols}|${grid.rows}`;
+      res = state.fieldCache.get(key);
+      if (!res) {
+        res = generate(spec.field, spec.seed + k, grid.cols, grid.rows, gridAspect);
+        state.fieldCache.set(key, res);
+        if (state.fieldCache.size > 40) state.fieldCache.delete(state.fieldCache.keys().next().value);
       }
-      ({ v, colors } = sampleImage(img, grid.cols, grid.rows, gridAspect));
-      normalize(v, false, 1);
-    } else {
-      let seed = spec.seed, res;
-      for (let k = 0; k < (gate ? 15 : 1); k++) {
-        const key = `${spec.field}|${seed + k}|${grid.cols}|${grid.rows}`;
-        res = state.fieldCache.get(key);
-        if (!res) {
-          res = generate(spec.field, seed + k, grid.cols, grid.rows, gridAspect);
-          state.fieldCache.set(key, res);
-          if (state.fieldCache.size > 40) state.fieldCache.delete(state.fieldCache.keys().next().value);
-        }
-        if (!gate || res.ok) { spec.seed = seed + k; rejected = k; break; }
-      }
-      v = res.v; desc = res.desc;
+      if (!gate || res.ok) { spec.seed += k; rejected = k; break; }
     }
-
-    draw(ctx, grid, v, { renderer: spec.renderer, palette: spec.palette, paletteSeed: spec.seed, colors });
-    state.current = { spec, desc, grid, stats: stats(v), rejected };
+    draw(ctx, grid, res.v, { renderer: spec.renderer, palette: spec.palette, paletteSeed: spec.seed });
+    state.current = { spec, desc: res.desc, grid, stats: stats(res.v), rejected };
     showInfo();
     writeHash(spec);
   } catch (e) {
@@ -107,30 +64,27 @@ async function render(spec, { gate = false } = {}) {
 
 function showInfo() {
   const { spec, desc, grid, rejected } = state.current;
-  const lines = [
+  $("info").textContent = [
     L(desc),
     `${L(RENDERERS[spec.renderer])} · ${L(PALETTE_LABELS[spec.palette])}`,
     `${t("grid")} ${grid.cols}×${grid.rows} · ${t("pitch")} ${spec.pitch} px`,
     `seed ${spec.seed}${rejected ? ` · ${t("rejected", rejected)}` : ""}`,
     `${state.pos + 1} / ${state.history.length}`,
-  ];
-  $("info").textContent = lines.join("\n");
+  ].join("\n");
 }
 
 // ─── Shuffle et historique ───────────────────────────────────────────────
 
 function resolveSpec(seed) {
   const c = state.choice, rc = mulberry32(seed ^ 0x5bd1e995), [W, H] = screenWH();
-  const field = c.source === "prefs" ? pickWeighted(rc, weighted(PREFERRED_FIELDS, FIELD_WEIGHTS))
-    : c.source === "hasard" ? pick(rc, FIELD_IDS) : c.source;
-  const renderer = c.renderer === "hasard" ? pick(rc, Object.keys(RENDERERS)) : c.renderer;
   const pitches = pitchesFor(W, H);
-  const pitch = c.pitchRandom ? pick(rc, pitches.filter((p) => p >= 10 && p <= 48)) : snapPitch(c.pitch, pitches);
-  let palette = c.palette;
-  if (palette === "prefs") palette = pickWeighted(rc, weighted(PREFERRED_PALETTES, PALETTE_WEIGHTS));
-  if (palette === "hasard") palette = isImageSource(field) && rc() < 0.5 ? "image" : pick(rc, Object.keys(PALETTES));
-  if (palette === "image" && !isImageSource(field)) palette = pick(rc, Object.keys(PALETTES));
-  return { seed, field, renderer, pitch, palette, W, H };
+  return {
+    seed, W, H,
+    field: c.source === "hasard" ? pickWeighted(rc, weighted(FIELD_IDS, FIELD_WEIGHTS)) : c.source,
+    renderer: c.renderer === "hasard" ? pick(rc, Object.keys(RENDERERS)) : c.renderer,
+    pitch: c.pitchRandom ? pick(rc, pitches.filter((p) => p >= 10 && p <= 48)) : snapPitch(c.pitch, pitches),
+    palette: c.palette === "hasard" ? pickWeighted(rc, weighted(PALETTES, PALETTE_WEIGHTS)) : c.palette,
+  };
 }
 
 async function shuffle() {
@@ -155,7 +109,6 @@ async function go(delta) {
 async function tweak(changes) {
   if (!state.current) return shuffle();
   const spec = { ...state.current.spec, ...changes };
-  if (spec.palette === "image" && !isImageSource(spec.field)) spec.palette = "lune";
   state.history[state.pos] = spec;
   await render(spec);
   syncControls();
@@ -170,13 +123,12 @@ function snapPitch(p, list) {
 async function save(kind) {
   if (!state.current) return;
   const { spec, desc, grid, stats: st } = state.current;
-  const tag = spec.field === "tableau" ? `tableau${spec.art?.id ?? ""}` : spec.field;
-  const name = `mosaique-${tag}-${spec.renderer}-${spec.palette}-${spec.seed}-${spec.W}x${spec.H}`;
   const params = {
-    name, seed: spec.seed, source: spec.field, rendu: spec.renderer, palette: spec.palette, pas: spec.pitch,
-    ecran: `${spec.W}x${spec.H}`, grille: `${grid.cols}x${grid.rows}`, description: L(desc).replace("\n", " — "),
+    name: `mosaique-${spec.field}-${spec.renderer}-${spec.palette}-${spec.seed}-${spec.W}x${spec.H}`,
+    seed: spec.seed, source: spec.field, rendu: spec.renderer, palette: spec.palette, pas: spec.pitch,
+    ecran: `${spec.W}x${spec.H}`, grille: `${grid.cols}x${grid.rows}`, description: L(desc),
     stats: { moyenne: +st.mean.toFixed(3), ecart: +st.std.toFixed(3), visible: +st.visible.toFixed(3) },
-    choix: { ...state.choice }, oeuvre: spec.art ?? null, image: spec.field === "image" ? state.userImageName : null,
+    choix: { ...state.choice },
   };
   const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
   try {
@@ -190,69 +142,49 @@ async function save(kind) {
 // ─── URL (reproductibilité) ──────────────────────────────────────────────
 
 function writeHash(spec) {
-  if (spec.field === "image") return;
   history.replaceState(null, "", `#${new URLSearchParams({ seed: spec.seed, source: spec.field, rendu: spec.renderer, pas: spec.pitch, palette: spec.palette })}`);
 }
 function readHash() {
   const h = new URLSearchParams(location.hash.slice(1));
-  if (!h.get("seed")) return null;
-  const [W, H] = screenWH(), field = h.get("source");
-  if (!(field in FIELDS) && field !== "tableau") return null;
-  return { seed: +h.get("seed"), field, renderer: h.get("rendu") || "cercles", pitch: snapPitch(+h.get("pas") || 24, pitchesFor(W, H)), palette: h.get("palette") || "glace", W, H };
+  const field = h.get("source"), palette = h.get("palette");
+  if (!h.get("seed") || !(field in FIELDS)) return null; // les champs archivés ne se rejouent plus
+  const [W, H] = screenWH();
+  return {
+    seed: +h.get("seed"), field, W, H,
+    renderer: h.get("rendu") in RENDERERS ? h.get("rendu") : "cercles",
+    pitch: snapPitch(+h.get("pas") || 24, pitchesFor(W, H)),
+    palette: PALETTES.includes(palette) ? palette : "glace",
+  };
 }
 
 // ─── Contrôles ───────────────────────────────────────────────────────────
 
 function buildControls() {
-  const src = $("source");
-  // Les options secondaires n'apparaissent qu'avec « Plus d'options » (ou si elles sont en cours d'usage).
-  const show = (val, preferred) => preferred || state.showAll || val === state.choice.source || val === state.choice.palette;
   const star = (id, weights) => ((weights[id] ?? 1) > 1 ? " ★" : "");
-  const opt = (id) => (show(id, false) ? `<option value="${id}">${L(FIELDS[id].label)}${star(id, FIELD_WEIGHTS)}</option>` : "");
-  const group = (label, body) => (body ? `<optgroup label="${label}">${body}</optgroup>` : "");
-  src.innerHTML =
-    group(t("groupPrefSources"), `<option value="prefs">${t("randomPrefs")}</option>` + PREFERRED_FIELDS.map((id) => `<option value="${id}">${L(FIELDS[id].label)}${star(id, FIELD_WEIGHTS)}</option>`).join("")) +
-    group(t("groupOther"), (show("hasard", false) ? `<option value="hasard">${t("randomAllFields")}</option>` : "") + FIELD_IDS.filter((id) => !PREFERRED_FIELDS.includes(id)).map(opt).join("")) +
-    group(t("groupImages"), (show("tableau", false) ? `<option value="tableau">${t("painting")}</option>` : "") + (show("image", false) ? `<option value="image">${t("myImage")}</option>` : ""));
+  $("source").innerHTML = `<option value="hasard">${t("randomPrefs")}</option>` +
+    FIELD_IDS.map((id) => `<option value="${id}">${L(FIELDS[id].label)}${star(id, FIELD_WEIGHTS)}</option>`).join("");
 
-  const seg = $("renderer");
-  seg.innerHTML = [["hasard", t("randomShort")], ...Object.entries(RENDERERS).map(([id, l]) => [id, L(l)])].map(([id, l]) => `<button data-r="${id}">${l}</button>`).join("");
+  $("renderer").innerHTML = [["hasard", t("randomShort")], ...Object.entries(RENDERERS).map(([id, l]) => [id, L(l)])]
+    .map(([id, l]) => `<button data-r="${id}">${l}</button>`).join("");
 
   const popt = (id) => `<option value="${id}">${L(PALETTE_LABELS[id])}${star(id, PALETTE_WEIGHTS)}</option>`;
-  $("palette").innerHTML =
-    `<option value="prefs">${t("randomPrefPalettes")}</option>` +
-    group(t("groupSpectral"), SPECTRAL_PALETTES.map(popt).join("")) +
-    group(t("groupCold"), COLD_PALETTES.map(popt).join("")) +
-    group(t("groupOther"), (show("hasard", false) ? `<option value="hasard">${t("randomAll")}</option>` : "") +
-      Object.keys(PALETTE_LABELS).filter((id) => !PREFERRED_PALETTES.includes(id) && show(id, false)).map(popt).join(""));
-  $("showAll").checked = state.showAll;
+  $("palette").innerHTML = `<option value="hasard">${t("randomPrefPalettes")}</option>` +
+    `<optgroup label="${t("groupSpectral")}">${SPECTRAL_PALETTES.map(popt).join("")}</optgroup>` +
+    `<optgroup label="${t("groupCold")}">${COLD_PALETTES.map(popt).join("")}</optgroup>`;
 
   $("lang").textContent = lang === "fr" ? "EN" : "FR";
   applyStatic();
 }
 
 function bindControls() {
-  const src = $("source"), seg = $("renderer");
-  $("showAll").onchange = () => {
-    state.showAll = $("showAll").checked; $("showAll").blur();
-    localStorage.setItem("mosaique.showAll", state.showAll ? "1" : "0");
-    buildControls(); syncControls();
-  };
+  $("screen").innerHTML = state.screens.map((s, i) => `<option value="${i}">${s.name} · ${s.width}×${s.height}</option>`).join("");
   $("lang").onclick = () => {
     setLang(lang === "fr" ? "en" : "fr");
     buildControls(); syncControls();
     if (state.current) showInfo();
   };
-
-  $("screen").innerHTML = state.screens.map((s, i) => `<option value="${i}">${s.name} · ${s.width}×${s.height}</option>`).join("");
-
-  src.onchange = () => {
-    src.blur();
-    if (src.value === "image" && !state.userImage) return $("file").click();
-    state.choice.source = src.value;
-    shuffle();
-  };
-  seg.onclick = (e) => {
+  $("source").onchange = () => { state.choice.source = $("source").value; $("source").blur(); shuffle(); };
+  $("renderer").onclick = (e) => {
     const r = e.target.dataset?.r; if (!r) return;
     state.choice.renderer = r;
     if (r === "hasard") return syncControls();
@@ -268,7 +200,7 @@ function bindControls() {
   $("palette").onchange = () => {
     const p = $("palette").value; $("palette").blur();
     state.choice.palette = p;
-    if (p !== "hasard" && p !== "prefs") tweak({ palette: p });
+    if (p !== "hasard") tweak({ palette: p });
   };
   $("screen").onchange = () => {
     state.screen = +$("screen").value; $("screen").blur();
@@ -280,7 +212,6 @@ function bindControls() {
   $("next").onclick = () => go(1);
   $("keep").onclick = () => save("keep");
   $("apply").onclick = () => save("apply");
-  $("file").onchange = () => { const f = $("file").files[0]; if (f) useUserImage(f); $("file").value = ""; };
 
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -290,38 +221,19 @@ function bindControls() {
     else if (e.key === "k" || e.key === "K") save("keep");
     else if (e.key === "a" || e.key === "A") save("apply");
   });
-
-  const drop = $("drop");
-  addEventListener("dragover", (e) => { e.preventDefault(); drop.hidden = false; });
-  addEventListener("dragleave", (e) => { if (!e.relatedTarget) drop.hidden = true; });
-  addEventListener("drop", (e) => {
-    e.preventDefault(); drop.hidden = true;
-    const f = [...e.dataTransfer.files].find((f) => f.type.startsWith("image/"));
-    if (f) useUserImage(f);
-  });
-}
-
-async function useUserImage(file) {
-  try {
-    state.userImage = await loadImage(URL.createObjectURL(file));
-    state.userImageName = file.name;
-    state.choice.source = "image";
-    await shuffle();
-  } catch { toast(t("badImage"), true); }
 }
 
 function updatePitchLabel(p) {
   const [W, H] = screenWH();
   const renderer = state.current?.spec.renderer ?? "cercles";
-  const g = makeGrid(renderer === "hasard" ? "cercles" : renderer, W, H, p, ctx);
+  const g = makeGrid(renderer, W, H, p, ctx);
   $("pitchLabel").textContent = `${p} px · ${g.cols}×${g.rows}`;
 }
 
 function syncControls() {
-  buildControls(); // une option secondaire en cours d'usage doit rester visible
   const c = state.choice, spec = state.current?.spec;
   $("source").value = c.source;
-  for (const b of $("renderer").children) b.classList.toggle("on", b.dataset.r === c.renderer || (c.renderer === "hasard" && b.dataset.r === "hasard"));
+  for (const b of $("renderer").children) b.classList.toggle("on", b.dataset.r === c.renderer);
   const [W, H] = screenWH(), pitches = pitchesFor(W, H);
   const p = spec?.pitch ?? snapPitch(c.pitch, pitches);
   $("pitch").max = pitches.length - 1;
@@ -336,7 +248,7 @@ function syncControls() {
 
 async function main() {
   try { state.screens = await (await fetch("/api/screens")).json(); }
-  catch { state.screens = [{ name: "défaut", width: 3840, height: 2160 }]; }
+  catch { state.screens = [{ name: "default", width: 3840, height: 2160 }]; }
   state.screen = state.screens.reduce((b, s, i, a) => (s.width * s.height > a[b].width * a[b].height ? i : b), 0);
   await prepareAscii();
   buildControls();

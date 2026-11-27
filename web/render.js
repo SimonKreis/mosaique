@@ -20,19 +20,14 @@ export const PALETTES = {
   givre: ["#05070a", "#1b2430", "#3d5266", "#7d97ad", "#c8d8e6", "#f4f9ff"],
   polaire: ["#03030f", "#121244", "#25358a", "#2f7fc4", "#6fd3e8", "#e6fbff"],
   aurore: ["#04101a", "#0d3b66", "#1e9e8f", "#6ff0c0", "#e8ffe8"],
-  braise: ["#0a0410", "#3b0f4f", "#9c2a5b", "#f0703a", "#ffd27a", "#fff4d6"],
-  nebuleuse: ["#07041a", "#2a1a6e", "#6a2fb0", "#d04fd0", "#ff9ee0", "#fff0fa"],
-  phosphore: ["#021006", "#064d1a", "#12a33a", "#4dff7a", "#d6ffe0"],
-  lune: ["#101010", "#3a3a3a", "#8a8a8a", "#d0d0d0", "#ffffff"],
 };
 export const PALETTE_LABELS = {
   cubehelix: { fr: "Cubehelix (auto)", en: "Cubehelix (auto)" }, turbo: { fr: "Turbo", en: "Turbo" },
   viridis: { fr: "Viridis", en: "Viridis" }, plasma: { fr: "Plasma", en: "Plasma" }, magma: { fr: "Magma", en: "Magma" },
   inferno: { fr: "Inferno", en: "Inferno" },
   glace: { fr: "Glace", en: "Ice" }, abysse: { fr: "Abysse", en: "Abyss" }, givre: { fr: "Givre", en: "Frost" },
-  polaire: { fr: "Polaire", en: "Polar" }, aurore: { fr: "Aurore", en: "Aurora" }, braise: { fr: "Braise", en: "Ember" },
-  nebuleuse: { fr: "Nébuleuse", en: "Nebula" }, phosphore: { fr: "Phosphore", en: "Phosphor" }, lune: { fr: "Lune", en: "Moon" },
-  spectre: { fr: "Spectre", en: "Spectrum" }, image: { fr: "Couleurs de l'image", en: "Image colours" },
+  polaire: { fr: "Polaire", en: "Polar" }, aurore: { fr: "Aurore", en: "Aurora" },
+  spectre: { fr: "Spectre", en: "Spectrum" },
 };
 export const SPECTRAL_PALETTES = ["cubehelix", "spectre", "turbo", "viridis", "plasma", "magma", "inferno"];
 export const COLD_PALETTES = ["glace", "abysse", "givre", "polaire", "aurore"];
@@ -129,21 +124,14 @@ export async function prepareAscii() {
 }
 
 export function draw(ctx, grid, v, opts) {
-  const { renderer, palette, colors } = opts;
+  const { renderer, palette } = opts;
   const W = ctx.canvas.width, H = ctx.canvas.height;
   const { cols, rows, cellW, cellH, ox, oy } = grid;
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-  const pal = palette === "image" && colors ? null : lut(palette === "image" ? "lune" : palette, opts.paletteSeed);
-  const boost = renderer !== "pixels";
+  const pal = lut(palette, opts.paletteSeed);
   const colorAt = (idx, val, dim = 1) => {
-    let r, g, b;
-    if (pal) [r, g, b] = pal[Math.round(val * 255)];
-    else {
-      r = colors[idx * 3]; g = colors[idx * 3 + 1]; b = colors[idx * 3 + 2];
-      // La taille porte déjà la luminosité : on éclaircit la teinte pour ne pas l'assombrir deux fois.
-      if (boost) { const f = Math.min(2.5, 235 / Math.max(r, g, b, 1)); r *= f; g *= f; b *= f; }
-    }
-    return `rgb(${Math.min(255, Math.round(r * dim))},${Math.min(255, Math.round(g * dim))},${Math.min(255, Math.round(b * dim))})`;
+    const [r, g, b] = pal[Math.round(val * 255)];
+    return `rgb(${Math.round(r * dim)},${Math.round(g * dim)},${Math.round(b * dim)})`;
   };
 
   if (renderer === "ascii") {
@@ -184,32 +172,4 @@ export function draw(ctx, grid, v, opts) {
       ctx.beginPath(); ctx.arc(cx, cy, (size * p) / 2, 0, Math.PI * 2); ctx.fill();
     }
   }
-}
-
-// Échantillonne une image (tableau ou image perso) sur la grille, en remplissage centré.
-export function sampleImage(img, cols, rows, gridAspect) {
-  const c = document.createElement("canvas"); c.width = cols; c.height = rows;
-  const x = c.getContext("2d", { willReadFrequently: true });
-  x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high";
-  const ia = img.naturalWidth / img.naturalHeight;
-  let sw = img.naturalWidth, sh = img.naturalHeight, sx = 0, sy = 0;
-  if (ia > gridAspect) { sw = sh * gridAspect; sx = (img.naturalWidth - sw) / 2; }
-  else { sh = sw / gridAspect; sy = (img.naturalHeight - sh) / 2; }
-  // Réduction progressive pour éviter le crénelage des grandes images.
-  let src = img, w = sw, h = sh, cx = sx, cy = sy;
-  while (w / 2 > cols * 2) {
-    const t = document.createElement("canvas"); t.width = Math.round(w / 2); t.height = Math.round(h / 2);
-    const tx = t.getContext("2d"); tx.imageSmoothingQuality = "high";
-    tx.drawImage(src, cx, cy, w, h, 0, 0, t.width, t.height);
-    src = t; w = t.width; h = t.height; cx = 0; cy = 0;
-  }
-  x.drawImage(src, cx, cy, w, h, 0, 0, cols, rows);
-  const d = x.getImageData(0, 0, cols, rows).data;
-  const v = new Float32Array(cols * rows), colors = new Uint8ClampedArray(cols * rows * 3);
-  for (let i = 0; i < cols * rows; i++) {
-    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
-    colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
-    v[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  }
-  return { v, colors };
 }

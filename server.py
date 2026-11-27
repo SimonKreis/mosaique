@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """Mosaïque — petit serveur local.
 
-Sert l'interface (web/), donne la liste des écrans, va chercher des tableaux
-du domaine public (Cleveland Museum of Art, CC0), enregistre les images
-gardées et applique un fond d'écran via `omarchy theme bg set`.
+Sert l'interface (web/), donne la liste des écrans, enregistre les images
+gardées et applique un fond d'écran via `omarchy theme bg set`. Aucun accès réseau.
 """
 
-import base64
 import json
 import os
-import random
 import shutil
 import subprocess
 import time
 import urllib.parse
-import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -22,14 +18,8 @@ ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 JOURNAL = Path(os.environ.get("MOSAIQUE_JOURNAL", ROOT / "data" / "journal.jsonl")).expanduser()
 PORT = int(os.environ.get("MOSAIQUE_PORT", "8765"))
-UA = "mosaique/0.1 (generateur local de fonds d'ecran)"
-CMA = "https://openaccess-api.clevelandart.org/api/artworks/"
-CMA_FILTER = "cc0=1&has_image=1&type=Painting"
 MAX_UPLOAD = 64 * 1024 * 1024
-TEXT_WORDS = ("folio", "text", "calligraph", "sutra", "manuscript", "page", "inscription", "colophon", "poem", "letter")
 
-_cma_total = None
-_art_cache = {}
 
 
 def keep_dir():
@@ -57,52 +47,6 @@ def screens():
     except Exception:
         pass
     return [{"name": "défaut", "width": 3840, "height": 2160, "description": ""}]
-
-
-def _get(url, timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
-
-
-def artwork(seed):
-    """Un tableau en format paysage, choisi de façon déterministe à partir de la seed."""
-    global _cma_total
-    if seed in _art_cache:
-        return _art_cache[seed]
-    if _cma_total is None:
-        _cma_total = json.loads(_get(f"{CMA}?{CMA_FILTER}&limit=1"))["info"]["total"]
-    rng = random.Random(seed)
-    for _ in range(6):
-        skip = rng.randrange(0, max(1, _cma_total - 100))
-        data = json.loads(_get(f"{CMA}?{CMA_FILTER}&limit=100&skip={skip}"))["data"]
-        landscape = []
-        for a in data:
-            web = (a.get("images") or {}).get("web") or {}
-            try:
-                w, h = int(web["width"]), int(web["height"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            title = (a.get("title") or "").lower()
-            # Le type « Painting » du musée inclut des pages de manuscrits et de la calligraphie.
-            if w / h >= 1.3 and not any(word in title for word in TEXT_WORDS):
-                landscape.append((a, web))
-        if not landscape:
-            continue
-        a, web = rng.choice(landscape)
-        img = _get(web["url"], timeout=40)
-        creators = ", ".join(c.get("description", "") for c in (a.get("creators") or []))
-        result = {
-            "id": a["id"],
-            "title": a.get("title", ""),
-            "artist": creators,
-            "date": a.get("creation_date", ""),
-            "url": a.get("url", ""),
-            "image": "data:image/jpeg;base64," + base64.b64encode(img).decode(),
-        }
-        _art_cache[seed] = result
-        return result
-    raise RuntimeError("aucun tableau en format paysage trouvé / no landscape painting found")
 
 
 def journal(entry):
@@ -145,12 +89,6 @@ class Handler(SimpleHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         if url.path == "/api/screens":
             return self._json(screens())
-        if url.path == "/api/artwork":
-            try:
-                seed = int(urllib.parse.parse_qs(url.query).get("seed", ["0"])[0])
-                return self._json(artwork(seed))
-            except Exception as e:
-                return self._json({"error": str(e)}, 502)
         return super().do_GET()
 
     def do_POST(self):
