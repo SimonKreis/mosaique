@@ -1,10 +1,15 @@
-import { FIELDS, FIELD_IDS, ALLOVER_IDS, generate, stats, normalize, mulberry32, pick, pickWeighted } from "./fields.js";
-import { PALETTES, PALETTE_LABELS, COLD_PALETTES, RENDERERS, pitchesFor, makeGrid, draw, sampleImage, prepareAscii } from "./render.js";
+import { FIELDS, FIELD_IDS, PREFERRED_FIELDS, generate, stats, normalize, mulberry32, pick, pickWeighted } from "./fields.js";
+import { PALETTES, PALETTE_LABELS, SPECTRAL_PALETTES, COLD_PALETTES, RENDERERS, pitchesFor, makeGrid, draw, sampleImage, prepareAscii } from "./render.js";
 import { lang, setLang, L, t, applyStatic } from "./i18n.js";
 
-// Préférences : froid et all-over. Encre et Glace, les favoris, pèsent double au tirage.
-const FAVORITE = { field: "encre", palette: "glace" };
-const weighted = (ids, fav) => ids.map((id) => [id, id === fav ? 2 : 1]);
+// Préférences : champs uniformes et symétriques, dégradés spectraux et froids.
+// Les favoris (★) pèsent plus lourd au tirage ; le reste vit dans « Plus d'options ».
+const FIELD_WEIGHTS = { encre: 2 };
+const PALETTE_WEIGHTS = { cubehelix: 3, spectre: 2, glace: 2 };
+const PREFERRED_PALETTES = [...SPECTRAL_PALETTES, ...COLD_PALETTES];
+const weighted = (ids, weights) => ids.map((id) => [id, weights[id] ?? 1]);
+const isPreferredSource = (v) => v === "prefs" || PREFERRED_FIELDS.includes(v);
+const isPreferredPalette = (v) => v === "prefs" || PREFERRED_PALETTES.includes(v);
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas"), ctx = canvas.getContext("2d");
@@ -14,7 +19,8 @@ const state = {
   screens: [],
   screen: 0,
   // Choix de l'utilisateur : "hasard" = retiré à chaque shuffle ; sinon verrouillé.
-  choice: { source: "allover", renderer: "cercles", pitch: 24, pitchRandom: false, palette: "froides" },
+  choice: { source: "prefs", renderer: "cercles", pitch: 24, pitchRandom: false, palette: "prefs" },
+  showAll: localStorage.getItem("mosaique.showAll") === "1",
   spec: null,
   current: null,
   history: [],
@@ -87,7 +93,7 @@ async function render(spec, { gate = false } = {}) {
       v = res.v; desc = res.desc;
     }
 
-    draw(ctx, grid, v, { renderer: spec.renderer, palette: spec.palette, colors });
+    draw(ctx, grid, v, { renderer: spec.renderer, palette: spec.palette, paletteSeed: spec.seed, colors });
     state.current = { spec, desc, grid, stats: stats(v), rejected };
     showInfo();
     writeHash(spec);
@@ -115,13 +121,13 @@ function showInfo() {
 
 function resolveSpec(seed) {
   const c = state.choice, rc = mulberry32(seed ^ 0x5bd1e995), [W, H] = screenWH();
-  const field = c.source === "allover" ? pickWeighted(rc, weighted(ALLOVER_IDS, FAVORITE.field))
+  const field = c.source === "prefs" ? pickWeighted(rc, weighted(PREFERRED_FIELDS, FIELD_WEIGHTS))
     : c.source === "hasard" ? pick(rc, FIELD_IDS) : c.source;
   const renderer = c.renderer === "hasard" ? pick(rc, Object.keys(RENDERERS)) : c.renderer;
   const pitches = pitchesFor(W, H);
   const pitch = c.pitchRandom ? pick(rc, pitches.filter((p) => p >= 10 && p <= 48)) : snapPitch(c.pitch, pitches);
   let palette = c.palette;
-  if (palette === "froides") palette = pickWeighted(rc, weighted(COLD_PALETTES, FAVORITE.palette));
+  if (palette === "prefs") palette = pickWeighted(rc, weighted(PREFERRED_PALETTES, PALETTE_WEIGHTS));
   if (palette === "hasard") palette = isImageSource(field) && rc() < 0.5 ? "image" : pick(rc, Object.keys(PALETTES));
   if (palette === "image" && !isImageSource(field)) palette = pick(rc, Object.keys(PALETTES));
   return { seed, field, renderer, pitch, palette, W, H };
@@ -199,20 +205,27 @@ function readHash() {
 
 function buildControls() {
   const src = $("source");
-  const star = (id, fav) => (id === fav ? " ★" : "");
-  const opt = (id) => `<option value="${id}">${L(FIELDS[id].label)}${star(id, FAVORITE.field)}</option>`;
+  // Les options secondaires n'apparaissent qu'avec « Plus d'options » (ou si elles sont en cours d'usage).
+  const show = (val, preferred) => preferred || state.showAll || val === state.choice.source || val === state.choice.palette;
+  const star = (id, weights) => ((weights[id] ?? 1) > 1 ? " ★" : "");
+  const opt = (id) => (show(id, false) ? `<option value="${id}">${L(FIELDS[id].label)}${star(id, FIELD_WEIGHTS)}</option>` : "");
+  const group = (label, body) => (body ? `<optgroup label="${label}">${body}</optgroup>` : "");
   src.innerHTML =
-    `<optgroup label="${t("groupPrefSources")}"><option value="allover">${t("randomAllover")}</option>${ALLOVER_IDS.map(opt).join("")}</optgroup>` +
-    `<optgroup label="${t("groupOther")}"><option value="hasard">${t("randomAllFields")}</option>${FIELD_IDS.filter((id) => !FIELDS[id].allOver).map(opt).join("")}</optgroup>` +
-    `<optgroup label="${t("groupImages")}"><option value="tableau">${t("painting")}</option><option value="image">${t("myImage")}</option></optgroup>`;
+    group(t("groupPrefSources"), `<option value="prefs">${t("randomPrefs")}</option>` + PREFERRED_FIELDS.map((id) => `<option value="${id}">${L(FIELDS[id].label)}${star(id, FIELD_WEIGHTS)}</option>`).join("")) +
+    group(t("groupOther"), (show("hasard", false) ? `<option value="hasard">${t("randomAllFields")}</option>` : "") + FIELD_IDS.filter((id) => !PREFERRED_FIELDS.includes(id)).map(opt).join("")) +
+    group(t("groupImages"), (show("tableau", false) ? `<option value="tableau">${t("painting")}</option>` : "") + (show("image", false) ? `<option value="image">${t("myImage")}</option>` : ""));
 
   const seg = $("renderer");
   seg.innerHTML = [["hasard", t("randomShort")], ...Object.entries(RENDERERS).map(([id, l]) => [id, L(l)])].map(([id, l]) => `<button data-r="${id}">${l}</button>`).join("");
 
-  const popt = (id) => `<option value="${id}">${L(PALETTE_LABELS[id])}${star(id, FAVORITE.palette)}</option>`;
+  const popt = (id) => `<option value="${id}">${L(PALETTE_LABELS[id])}${star(id, PALETTE_WEIGHTS)}</option>`;
   $("palette").innerHTML =
-    `<optgroup label="${t("groupPrefPalettes")}"><option value="froides">${t("randomCold")}</option>${COLD_PALETTES.map(popt).join("")}</optgroup>` +
-    `<optgroup label="${t("groupOther")}"><option value="hasard">${t("randomAll")}</option>${Object.keys(PALETTE_LABELS).filter((id) => !COLD_PALETTES.includes(id)).map(popt).join("")}</optgroup>`;
+    `<option value="prefs">${t("randomPrefPalettes")}</option>` +
+    group(t("groupSpectral"), SPECTRAL_PALETTES.map(popt).join("")) +
+    group(t("groupCold"), COLD_PALETTES.map(popt).join("")) +
+    group(t("groupOther"), (show("hasard", false) ? `<option value="hasard">${t("randomAll")}</option>` : "") +
+      Object.keys(PALETTE_LABELS).filter((id) => !PREFERRED_PALETTES.includes(id) && show(id, false)).map(popt).join(""));
+  $("showAll").checked = state.showAll;
 
   $("lang").textContent = lang === "fr" ? "EN" : "FR";
   applyStatic();
@@ -220,6 +233,11 @@ function buildControls() {
 
 function bindControls() {
   const src = $("source"), seg = $("renderer");
+  $("showAll").onchange = () => {
+    state.showAll = $("showAll").checked; $("showAll").blur();
+    localStorage.setItem("mosaique.showAll", state.showAll ? "1" : "0");
+    buildControls(); syncControls();
+  };
   $("lang").onclick = () => {
     setLang(lang === "fr" ? "en" : "fr");
     buildControls(); syncControls();
@@ -250,7 +268,7 @@ function bindControls() {
   $("palette").onchange = () => {
     const p = $("palette").value; $("palette").blur();
     state.choice.palette = p;
-    if (p !== "hasard" && p !== "froides") tweak({ palette: p });
+    if (p !== "hasard" && p !== "prefs") tweak({ palette: p });
   };
   $("screen").onchange = () => {
     state.screen = +$("screen").value; $("screen").blur();
@@ -300,6 +318,7 @@ function updatePitchLabel(p) {
 }
 
 function syncControls() {
+  buildControls(); // une option secondaire en cours d'usage doit rester visible
   const c = state.choice, spec = state.current?.spec;
   $("source").value = c.source;
   for (const b of $("renderer").children) b.classList.toggle("on", b.dataset.r === c.renderer || (c.renderer === "hasard" && b.dataset.r === "hasard"));

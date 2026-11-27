@@ -1,8 +1,20 @@
 // Rendus : la valeur de chaque cellule (0–1) devient un cercle, un carré,
 // un pixel ou un caractère. La grille est calée sur la résolution de l'écran.
 
-// Palettes froides d'abord (les préférées), puis les autres.
+import { mulberry32 } from "./fields.js";
+
+// Dégradés spectraux documentés : viridis, plasma, magma, inferno (van der Walt
+// et Smith, matplotlib 2015) et turbo (Mikhailov, Google 2019), échantillonnés.
+// Cubehelix (Green, 2011) est calculé : une famille infinie de dégradés
+// multicolores, du noir au blanc, tirée par la seed.
 export const PALETTES = {
+  cubehelix: null,
+  spectre: ["#1a0b3a", "#3b4cc0", "#20b2aa", "#9be15d", "#ffd23f", "#ff6b6b"],
+  turbo: ["#30123b", "#4145ab", "#4675ed", "#39a2fc", "#1bcfd4", "#24eca6", "#61fc6c", "#a4fc3b", "#d1e834", "#f3c63a", "#fe9b2d", "#f36315", "#d93806", "#b11901", "#7a0402"],
+  viridis: ["#440154", "#482878", "#3e4989", "#31688e", "#26828e", "#1f9e89", "#35b779", "#6ece58", "#b5de2b", "#fde725"],
+  plasma: ["#0d0887", "#46039f", "#7201a8", "#9c179e", "#bd3786", "#d8576b", "#ed7953", "#fb9f3a", "#fdca26", "#f0f921"],
+  magma: ["#000004", "#180f3d", "#440f76", "#721f81", "#9e2f7f", "#cd4071", "#f1605d", "#fd9668", "#feca8d", "#fcfdbf"],
+  inferno: ["#000004", "#1b0c41", "#4a0c6b", "#781c6d", "#a52c60", "#cf4446", "#ed6925", "#fb9b06", "#f7d13d", "#fcffa4"],
   glace: ["#040817", "#0b2a6f", "#1e6fd9", "#34d1f0", "#c9f6ff", "#ffffff"],
   abysse: ["#01040a", "#03122b", "#08305a", "#0f5c86", "#3aa0c8", "#bfe9ff"],
   givre: ["#05070a", "#1b2430", "#3d5266", "#7d97ad", "#c8d8e6", "#f4f9ff"],
@@ -12,14 +24,17 @@ export const PALETTES = {
   nebuleuse: ["#07041a", "#2a1a6e", "#6a2fb0", "#d04fd0", "#ff9ee0", "#fff0fa"],
   phosphore: ["#021006", "#064d1a", "#12a33a", "#4dff7a", "#d6ffe0"],
   lune: ["#101010", "#3a3a3a", "#8a8a8a", "#d0d0d0", "#ffffff"],
-  spectre: ["#1a0b3a", "#3b4cc0", "#20b2aa", "#9be15d", "#ffd23f", "#ff6b6b"],
 };
 export const PALETTE_LABELS = {
+  cubehelix: { fr: "Cubehelix (auto)", en: "Cubehelix (auto)" }, turbo: { fr: "Turbo", en: "Turbo" },
+  viridis: { fr: "Viridis", en: "Viridis" }, plasma: { fr: "Plasma", en: "Plasma" }, magma: { fr: "Magma", en: "Magma" },
+  inferno: { fr: "Inferno", en: "Inferno" },
   glace: { fr: "Glace", en: "Ice" }, abysse: { fr: "Abysse", en: "Abyss" }, givre: { fr: "Givre", en: "Frost" },
   polaire: { fr: "Polaire", en: "Polar" }, aurore: { fr: "Aurore", en: "Aurora" }, braise: { fr: "Braise", en: "Ember" },
   nebuleuse: { fr: "Nébuleuse", en: "Nebula" }, phosphore: { fr: "Phosphore", en: "Phosphor" }, lune: { fr: "Lune", en: "Moon" },
   spectre: { fr: "Spectre", en: "Spectrum" }, image: { fr: "Couleurs de l'image", en: "Image colours" },
 };
+export const SPECTRAL_PALETTES = ["cubehelix", "spectre", "turbo", "viridis", "plasma", "magma", "inferno"];
 export const COLD_PALETTES = ["glace", "abysse", "givre", "polaire", "aurore"];
 export const RENDERERS = { cercles: { fr: "Cercles", en: "Circles" }, carres: { fr: "Carrés", en: "Squares" }, pixels: { fr: "Pixels", en: "Pixels" }, ascii: { fr: "ASCII", en: "ASCII" } };
 
@@ -28,8 +43,30 @@ const LEVELS = 6; // niveaux de taille pour cercles et carrés
 
 function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
 
+// Cubehelix (Green 2011) : une hélice autour de la diagonale noir → blanc du cube RGB.
+// La luminosité croît toujours ; la seed fixe la teinte de départ, le nombre de
+// tours et la saturation.
+export function cubehelixParams(seed) {
+  const r = mulberry32((seed ^ 0x2c1b3c6d) >>> 0);
+  return { start: r() * 3, rot: (r() < 0.5 ? -1 : 1) * (1 + r() * 1.5), hue: 1.5 + r(), gamma: 0.55 + r() * 0.3 };
+}
+function cubehelix({ start, rot, hue, gamma }) {
+  const out = [];
+  for (let i = 0; i < 256; i++) {
+    const l = Math.pow(i / 255, gamma), phi = 2 * Math.PI * (start / 3 + rot * (i / 255)), a = (hue * l * (1 - l)) / 2;
+    const c = Math.cos(phi), s = Math.sin(phi);
+    out.push([l + a * (-0.14861 * c + 1.78277 * s), l + a * (-0.29227 * c - 0.90649 * s), l + a * (1.97294 * c)]
+      .map((x) => Math.round(255 * Math.min(1, Math.max(0, x)))));
+  }
+  return out;
+}
+
 const lutCache = {};
-function lut(name) {
+function lut(name, seed = 0) {
+  if (name === "cubehelix") {
+    const key = `cubehelix:${seed}`;
+    return lutCache[key] ?? (lutCache[key] = cubehelix(cubehelixParams(seed)));
+  }
   if (lutCache[name]) return lutCache[name];
   const stops = PALETTES[name].map(hexToRgb), out = [];
   for (let i = 0; i < 256; i++) {
@@ -96,7 +133,7 @@ export function draw(ctx, grid, v, opts) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
   const { cols, rows, cellW, cellH, ox, oy } = grid;
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-  const pal = palette === "image" && colors ? null : lut(palette === "image" ? "lune" : palette);
+  const pal = palette === "image" && colors ? null : lut(palette === "image" ? "lune" : palette, opts.paletteSeed);
   const boost = renderer !== "pixels";
   const colorAt = (idx, val, dim = 1) => {
     let r, g, b;

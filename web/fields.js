@@ -110,6 +110,7 @@ const ondes = {
 
 const chladni = {
   label: { fr: "Chladni", en: "Chladni" },
+  allOver: true,
   gen(rng, { cols, rows, aspect }) {
     const n = rndInt(rng, 1, 9);
     let m = rndInt(rng, 1, 9); if (m === n) m = n + rndInt(rng, 1, 3);
@@ -223,12 +224,15 @@ const attracteur = {
 
 const automate = {
   label: { fr: "Automate", en: "Automaton" },
+  allOver: true,
   gen(rng, { cols, rows }) {
-    const rules = [30, 45, 73, 90, 105, 110, 124, 137, 150, 18, 22, 54, 57, 62, 75, 89, 101, 126, 135, 146, 169, 182, 193, 225];
+    // Règles des classes 3 (chaotiques) et 4 (complexes) de Wolfram (1984) :
+    // depuis un état aléatoire, elles couvrent tout l'écran sans se figer.
+    const rules = [18, 22, 30, 45, 60, 90, 105, 106, 122, 126, 129, 146, 150, 161, 182, 54, 110, 124, 137, 147, 193];
     const rule = pick(rng, rules), sub = pick(rng, [1, 2, 2]);
     const w = cols * sub, h = rows * sub, data = new Float32Array(w * h);
     let row = new Uint8Array(w), next = new Uint8Array(w);
-    const single = rng() < 0.35, density = rnd(rng, 0.04, 0.5);
+    const single = rng() < 0.2, density = rnd(rng, 0.04, 0.5);
     if (single) row[Math.floor(w / 2)] = 1;
     else for (let i = 0; i < w; i++) row[i] = rng() < density ? 1 : 0;
     const warm = single ? 0 : rndInt(rng, 0, h);
@@ -556,9 +560,110 @@ const moire = {
   },
 };
 
-// Ordre d'affichage : les champs all-over d'abord.
-export const FIELDS = { encre, coulures, physarum, flux, caustiques, craquelure, turing, moire,
-  ondes, chladni, julia, attracteur, automate, harmonographe, spirale };
+
+// ─── Expériences mathématiques uniformes et symétriques ──────────────────
+
+// Quasicristal : superposition de n ondes planes à directions régulièrement
+// espacées. Symétrie de rotation d'ordre n, ordre sans périodicité (Shechtman 1984).
+const quasicristal = {
+  label: { fr: "Quasicristal", en: "Quasicrystal" },
+  allOver: true,
+  gen(rng, { cols, rows, aspect }) {
+    const n = pick(rng, [5, 5, 7, 7, 8, 9]);
+    const k = TAU / (rnd(rng, 10, 22) * (2 / rows)); // longueur d'onde : 10 à 22 cellules
+    const rot = rnd(rng, 0, TAU), dirs = [];
+    for (let i = 0; i < n; i++) { const a = rot + (Math.PI * i) / n; dirs.push([Math.cos(a) * k, Math.sin(a) * k]); }
+    // Centre de symétrie hors de l'écran : pas de rosace centrale, pas de foyer.
+    const ox = rnd(rng, 40, 400) * (rng() < 0.5 ? -1 : 1), oy = rnd(rng, 40, 400) * (rng() < 0.5 ? -1 : 1);
+    const out = analytic(cols, rows, aspect, 2, (x, y) => {
+      let s = 0;
+      for (const [kx, ky] of dirs) s += Math.cos(kx * (x + ox) + ky * (y + oy));
+      return s / n;
+    });
+    return { ...out, zeroFloor: false, gamma: 1.2, desc: { fr: `Quasicristal · symétrie d'ordre ${2 * n}`, en: `Quasicrystal · ${2 * n}-fold symmetry` } };
+  },
+};
+
+// Pavage de Truchet (1704) : tuiles à deux orientations tirées au hasard.
+// Variante « arcs » de Smith (1987) ou diagonales (le labyrinthe de 10 PRINT).
+const truchet = {
+  label: { fr: "Truchet", en: "Truchet" },
+  allOver: true,
+  gen(rng, { cols, rows, aspect }) {
+    const T = rndInt(rng, 3, 9) * (2 / rows), arcs = rng() < 0.65, width = rnd(rng, 0.07, 0.16);
+    const seed = rndInt(rng, 1, 1e9);
+    const out = analytic(cols, rows, aspect, 3, (x, y) => {
+      const i = Math.floor(x / T), j = Math.floor(y / T);
+      let u = x / T - i; const v = y / T - j;
+      if (hash2(i, j, seed) < 0.5) u = 1 - u;
+      const d = arcs
+        ? Math.min(Math.abs(Math.hypot(u, v) - 0.5), Math.abs(Math.hypot(1 - u, 1 - v) - 0.5))
+        : Math.abs(u - v) / Math.SQRT2;
+      return Math.exp(-((d / width) ** 2));
+    });
+    return { ...out, zeroFloor: true, gamma: 1, desc: { fr: `Truchet · ${arcs ? "arcs de Smith" : "diagonales"} · tuiles de ${(T * rows / 2).toFixed(0)} cellules`, en: `Truchet · ${arcs ? "Smith arcs" : "diagonals"} · ${(T * rows / 2).toFixed(0)}-cell tiles` } };
+  },
+};
+
+// Automate cellulaire cyclique (Fisch, Gravner et Griffeath, 1991) : chaque
+// cellule passe à l'état suivant si un voisin l'a déjà atteint. Le chaos
+// initial s'organise en spirales qui couvrent tout l'écran.
+const cyclique = {
+  label: { fr: "Cyclique", en: "Cyclic" },
+  allOver: true,
+  gen(rng, { cols, rows }) {
+    const [w, h] = simSize(cols, rows, 240);
+    const C = rndInt(rng, 10, 16), steps = 1200;
+    let a = new Uint8Array(w * h), b = new Uint8Array(w * h);
+    for (let i = 0; i < a.length; i++) a[i] = Math.floor(rng() * C);
+    for (let s = 0; s < steps; s++) {
+      for (let y = 0; y < h; y++) {
+        const yu = ((y + h - 1) % h) * w, yc = y * w, yd = ((y + 1) % h) * w;
+        for (let x = 0; x < w; x++) {
+          const c = a[yc + x], nx = (c + 1) % C;
+          b[yc + x] = a[yu + x] === nx || a[yd + x] === nx || a[yc + (x + w - 1) % w] === nx || a[yc + (x + 1) % w] === nx ? nx : c;
+        }
+      }
+      [a, b] = [b, a];
+    }
+    const data = Float32Array.from(a, (c) => c / (C - 1));
+    return { w, h, data, nearest: true, zeroFloor: true, gamma: 1, desc: { fr: `Cyclique · ${C} états`, en: `Cyclic · ${C} states` } };
+  },
+};
+
+// Tas de sable abélien (Bak, Tang et Wiesenfeld, 1987) : l'élément neutre du
+// groupe des tas de sable sur le rectangle de l'écran, une fractale à double symétrie.
+const tasDeSable = {
+  label: { fr: "Tas de sable", en: "Sandpile" },
+  allOver: true,
+  gen(rng, { cols, rows }) {
+    const div = pick(rng, [1, 1, 2]);
+    const w = Math.max(8, Math.round(Math.min(cols, 200) / div)), h = Math.max(6, Math.round((w * rows) / cols));
+    const stabilize = (g) => {
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          const i = y * w + x, t = g[i] >> 2;
+          if (!t) continue;
+          changed = true; g[i] -= 4 * t;
+          if (x > 0) g[i - 1] += t; if (x < w - 1) g[i + 1] += t;
+          if (y > 0) g[i - w] += t; if (y < h - 1) g[i + w] += t;
+        }
+      }
+      return g;
+    };
+    // Élément neutre : e = stab(6 − stab(6)), où 6 = deux fois la configuration maximale stable.
+    const s6 = stabilize(new Int32Array(w * h).fill(6));
+    const e = stabilize(Int32Array.from(s6, (v) => 6 - v));
+    const data = Float32Array.from(e, (v) => v / 4); // hauteur / seuil d'éboulement
+    return { w, h, data, nearest: true, dense: true, absolute: true, zeroFloor: true, gamma: 1, desc: { fr: `Tas de sable · élément neutre ${w}×${h}`, en: `Sandpile · identity ${w}×${h}` } };
+  },
+};
+
+// Les préférés d'abord : uniformes, symétriques, « expériences mathématiques ».
+export const PREFERRED_FIELDS = ["encre", "coulures", "flux", "automate", "caustiques", "chladni", "quasicristal", "truchet", "cyclique"];
+export const FIELDS = { encre, coulures, flux, automate, caustiques, chladni, quasicristal, truchet, cyclique, tasDeSable,
+  physarum, craquelure, turing, moire, ondes, julia, attracteur, harmonographe, spirale };
 export const ALLOVER_IDS = Object.keys(FIELDS).filter((id) => FIELDS[id].allOver);
 export const FIELD_IDS = Object.keys(FIELDS);
 
@@ -567,6 +672,11 @@ export const FIELD_IDS = Object.keys(FIELDS);
 export function resample(src, cols, rows) {
   const { w, h, data } = src, out = new Float32Array(cols * rows);
   if (w === cols && h === rows) { out.set(data); return out; }
+  if (src.nearest) { // états discrets : pas d'interpolation entre états
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++)
+      out[j * cols + i] = data[Math.min(h - 1, Math.floor(((j + 0.5) * h) / rows)) * w + Math.min(w - 1, Math.floor(((i + 0.5) * w) / cols))];
+    return out;
+  }
   if (w >= cols && h >= rows) {
     for (let j = 0; j < rows; j++) {
       const y0 = Math.floor((j * h) / rows), y1 = Math.max(y0 + 1, Math.floor(((j + 1) * h) / rows));
@@ -611,8 +721,9 @@ export function stats(v) {
 }
 
 // Filtre qualité : ni presque vide, ni saturé, ni uniforme.
-export function passesGate(st) {
-  return st.mean > 0.05 && st.mean < 0.62 && st.std > 0.07 && st.visible > 0.04 && st.visible < 0.92;
+// dense : champ à états discrets qui remplit naturellement tout l'écran (tas de sable).
+export function passesGate(st, dense = false) {
+  return st.mean > 0.05 && st.mean < (dense ? 0.85 : 0.62) && st.std > 0.07 && st.visible > 0.04 && st.visible < (dense ? 1.01 : 0.92);
 }
 
 // Critère all-over : l'écran découpé en 6×4 blocs ; aucun bloc presque vide et une
@@ -636,8 +747,8 @@ export function generate(fieldId, seed, cols, rows, aspect) {
   const rng = mulberry32(seed);
   const field = FIELDS[fieldId];
   const out = field.gen(rng, { cols, rows, aspect });
-  const v = normalize(resample(out, cols, rows), out.zeroFloor, out.gamma);
+  const v = out.absolute ? resample(out, cols, rows) : normalize(resample(out, cols, rows), out.zeroFloor, out.gamma);
   const st = stats(v);
   const allOver = field.allOver ? allOverScore(v, cols, rows) : null;
-  return { v, desc: out.desc, stats: st, allOver, ok: passesGate(st) && (!allOver || allOverOk(allOver)) };
+  return { v, desc: out.desc, stats: st, allOver, ok: passesGate(st, out.dense) && (!allOver || allOverOk(allOver)) };
 }
